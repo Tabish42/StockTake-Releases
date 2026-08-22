@@ -1,0 +1,15 @@
+{
+  "master_switch_enabled": true,
+  "require_whitelist": false,
+  "blocked_message": "Test Block Message",
+  "blocked_devices": [
+    "ST-BLOCKED-01",
+    "ST-BLOCKED-02"
+  ],
+  "allowed_devices": [
+    "ST-ALLOWED-01"
+  ],
+  "device_metadata": {
+    "ST-BLOCKED-01": "Hamala Branch Scanner"
+  }
+}
