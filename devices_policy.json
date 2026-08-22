@@ -1,15 +1,4 @@
 {
-  "master_switch_enabled": true,
-  "require_whitelist": false,
-  "blocked_message": "Test Block Message",
-  "blocked_devices": [
-    "ST-BLOCKED-01",
-    "ST-BLOCKED-02"
-  ],
-  "allowed_devices": [
-    "ST-ALLOWED-01"
-  ],
-  "device_metadata": {
-    "ST-BLOCKED-01": "Hamala Branch Scanner"
-  }
+  "payload": "Qu90nDLSaFFeK81GsTexflyWJjlTOnlqwXnzCMlvtI0fgOlFGbisaDPEFqyjA4T92F/+r/YXkzRwl5jNHrrHqOQTqHdRk7iZlKdSXPdiiSqjnLL8QziNHFGGO56GBNUKaW3sVrBNZU3Ythc+2iCZBdo/fJYA+zIns6Pe0Ets9EUNzI0nKWur7M64PtrN2XDCctdDZWN4AWqinQhuEIdE71enxRgn7GKRnJzeDd3y35lwHDK7XF9kLiWMXa43Kp5VEvX2ZcjGXe5Nuim7z9FGo7bxiVboiyRDDzb1xtzX5QAMZV+ovgTqvRnFb4HJ944Y84GqS+rNWiPHs01tyAWF8kHTPRyvXRb5B9E2B1Pp9HH0YRBp1aF5wHsAJ5sSMwNAVsA9Et9jnU2uV2kE+Ac2q7xQZKEqNPYyM160OuUvETQ=",
+  "encrypted": true
 }
