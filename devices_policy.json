@@ -10,8 +10,6 @@
     "ST-ALLOWED-01"
   ],
   "device_metadata": {
-    "ST-BLOCKED-01": "Hamala Branch Scanner",
-    "ST-BLOCKED-02": "",
-    "ST-ALLOWED-01": ""
+    "ST-BLOCKED-01": "Hamala Branch Scanner"
   }
 }
