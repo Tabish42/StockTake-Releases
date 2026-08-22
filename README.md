@@ -8,14 +8,14 @@ Official binary releases and installers for the **StockTake Desktop Application*
 
 ---
 
-## 📥 Downloads (Latest: v2.1.0)
+## 📥 Downloads (Latest: v2.1.1)
 
 👉 **[Download from Latest Releases Page](https://github.com/Tabish42/StockTake-Releases/releases/latest)**
 
 | Package Format | File Name | Description |
 | :--- | :--- | :--- |
-| **Windows Installer** | `StockTake-2.1.0.msi` | Standard Windows installer with Start Menu entry and Desktop shortcuts. |
-| **Android Package** | `StockTake-2.1.0.apk` | Android APK with hardware-locked device identity and auto-discovery beacon. |
+| **Windows Installer** | `StockTake-2.1.1.msi` | Standard Windows installer with Start Menu entry and Desktop shortcuts. |
+| **Android Package** | `StockTake-2.1.1.apk` | Android APK with hardware-locked device identity and auto-discovery beacon. |
 
 > **Note**: Both packages include an embedded Java runtime. You **do not** need to install Java on your PC.
 
