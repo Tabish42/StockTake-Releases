@@ -156,10 +156,13 @@ async function kvGet(KV, key) {
  * Low-level KV Put wrapper with in-memory fallback.
  */
 async function kvPut(KV, key, value) {
+  inMemoryStore.set(key, value);
   if (KV) {
-    await KV.put(key, value);
-  } else {
-    inMemoryStore.set(key, value);
+    try {
+      await KV.put(key, value);
+    } catch (err) {
+      console.warn(`KV.put failed for key ${key} (fallback to memory):`, err && err.message);
+    }
   }
 }
 
@@ -167,10 +170,13 @@ async function kvPut(KV, key, value) {
  * Low-level KV Delete wrapper with in-memory fallback.
  */
 async function kvDelete(KV, key) {
+  inMemoryStore.delete(key);
   if (KV) {
-    await KV.delete(key);
-  } else {
-    inMemoryStore.delete(key);
+    try {
+      await KV.delete(key);
+    } catch (err) {
+      console.warn(`KV.delete failed for key ${key}:`, err && err.message);
+    }
   }
 }
 
