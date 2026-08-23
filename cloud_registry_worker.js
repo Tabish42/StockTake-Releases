@@ -164,6 +164,26 @@ async function kvPut(KV, key, value) {
 }
 
 /**
+ * Low-level KV Delete wrapper with in-memory fallback.
+ */
+async function kvDelete(KV, key) {
+  if (KV) {
+    await KV.delete(key);
+  } else {
+    inMemoryStore.delete(key);
+  }
+}
+
+/**
+ * Deletes atomic device record (`device:{id}`).
+ */
+async function deleteDeviceRecord(KV, deviceId) {
+  const normId = deviceId.trim().toUpperCase();
+  const key = `device:${normId}`;
+  await kvDelete(KV, key);
+}
+
+/**
  * Low-level KV List wrapper with in-memory fallback.
  */
 async function kvList(KV, prefix) {
@@ -661,6 +681,40 @@ export default {
           allow_price_check: updatedDevice ? updatedDevice.allow_price_check : undefined,
           branch: updatedDevice ? updatedDevice.branch : undefined,
           name: updatedDevice ? updatedDevice.name : undefined
+        });
+      }
+
+      // -------------------------------------------------------------
+      // 5b. Admin Device Deletion (POST /api/device/delete or DELETE /api/device)
+      // Authenticated deletion of registered device from KV
+      // -------------------------------------------------------------
+      if (((url.pathname === "/api/device/delete" && request.method === "POST") ||
+           (url.pathname === "/api/device" && request.method === "DELETE") ||
+           (url.pathname === "/api/device/delete" && request.method === "DELETE"))) {
+        if (!checkAdminAuth(request, env)) {
+          return errorResponse("Unauthorized: Missing or invalid admin authorization token", 401);
+        }
+
+        let id = url.searchParams.get("id") || url.searchParams.get("device_id") || "";
+        if (!id && request.method === "POST") {
+          try {
+            const body = await request.json();
+            id = body.device_id || body.id || "";
+          } catch (_) {}
+        }
+        id = id.trim().toUpperCase();
+
+        if (!id) {
+          return errorResponse("Missing required field: id or device_id", 400);
+        }
+
+        await deleteDeviceRecord(KV, id);
+
+        return jsonResponse({
+          success: true,
+          deleted: true,
+          device_id: id,
+          status: "ok"
         });
       }
 
