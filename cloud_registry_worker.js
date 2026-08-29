@@ -264,45 +264,6 @@ async function getGlobalPolicy(KV) {
     if (raw) {
       return { ...defaultPolicy, ...JSON.parse(raw) };
     }
-
-    // Check legacy "fleet_policy" migration fallback
-    const legacyRaw = await kvGet(KV, "fleet_policy");
-    if (legacyRaw) {
-      const legacy = JSON.parse(legacyRaw);
-      const migrated = {
-        ...defaultPolicy,
-        master_switch_enabled: legacy.master_switch_enabled !== undefined ? legacy.master_switch_enabled : true,
-        blocked_message: legacy.blocked_message || defaultPolicy.blocked_message
-      };
-      await saveGlobalPolicy(KV, migrated);
-
-      // Migrate legacy device records if present
-      if (legacy.device_records && typeof legacy.device_records === "object") {
-        for (const [id, rec] of Object.entries(legacy.device_records)) {
-          const normId = id.trim().toUpperCase();
-          const isBlocked = Array.isArray(legacy.blocked_devices) && legacy.blocked_devices.includes(normId);
-          const devObj = {
-            device_id: normId,
-            id: normId,
-            name: rec.name || "",
-            model: rec.model || "Unknown Model",
-            platform: rec.platform || "Android",
-            version: rec.version || "1.0.0",
-            branch: rec.branch || "DEFAULT",
-            ip_address: rec.ip_address || "",
-            is_blocked: isBlocked,
-            blocked_message: isBlocked ? (legacy.blocked_message || "") : "",
-            allow_scanning: true,
-            allow_price_check: true,
-            pending_commands: [],
-            created_at: Date.now(),
-            last_seen: rec.last_seen ? new Date(rec.last_seen).getTime() : Date.now()
-          };
-          await saveDeviceRecord(KV, normId, devObj);
-        }
-      }
-      return migrated;
-    }
   } catch (e) {
     console.error("Error reading global policy:", e);
   }
