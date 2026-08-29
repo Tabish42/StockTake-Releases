@@ -1,5 +1,2 @@
-
-dist/
+*.zip
 *.msi
-*.apk
-

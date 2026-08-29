@@ -38,6 +38,33 @@ const ALLOWED_COMMANDS = [
 // Fallback in-memory store for local testing / non-KV environments
 const inMemoryStore = new Map();
 
+// Active SSE stream connections: Map<deviceId, Set<writer>>
+const activeStreams = new Map();
+
+function broadcastToDevice(deviceId, eventType, data) {
+  const cleanId = (deviceId || "").trim().toUpperCase();
+  const writers = activeStreams.get(cleanId);
+  if (!writers || writers.size === 0) return;
+  const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(payload);
+  for (const writer of Array.from(writers)) {
+    try {
+      writer.write(encoded).catch(() => {
+        writers.delete(writer);
+      });
+    } catch (_) {
+      writers.delete(writer);
+    }
+  }
+}
+
+function broadcastToAll(eventType, data) {
+  for (const devId of Array.from(activeStreams.keys())) {
+    broadcastToDevice(devId, eventType, data);
+  }
+}
+
 /**
  * Constant-time string equality check to mitigate timing attacks.
  */
@@ -468,6 +495,100 @@ export default {
       }
 
       // -------------------------------------------------------------
+      // 2b. Real-Time Instant Security & Command Stream (GET /api/device/stream)
+      // Server-Sent Events (SSE) stream for sub-second push delivery
+      // -------------------------------------------------------------
+      if (url.pathname === "/api/device/stream" && request.method === "GET") {
+        const rawId = url.searchParams.get("id") || url.searchParams.get("device_id") || "";
+        const id = rawId.trim().toUpperCase();
+        if (!id) {
+          return errorResponse("Missing required query parameter: id or device_id", 400);
+        }
+
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        const encoder = new TextEncoder();
+
+        if (!activeStreams.has(id)) {
+          activeStreams.set(id, new Set());
+        }
+        activeStreams.get(id).add(writer);
+
+        (async () => {
+          try {
+            const [globalPolicy, device] = await Promise.all([
+              getGlobalPolicy(KV),
+              getDeviceRecord(KV, id)
+            ]);
+
+            const now = Date.now();
+            const isWin = ((device && device.platform) || url.searchParams.get("platform") || "").toLowerCase().includes("win");
+            const minReqVersion = isWin ? (globalPolicy.min_version_windows || "2.1.0") : (globalPolicy.min_version_android || "2.1.0");
+            const clientVersion = url.searchParams.get("version") || (device ? device.version : "1.0.0");
+            const isOutdated = isVersionOutdated(clientVersion, minReqVersion);
+
+            let isAuthorized = true;
+            let blockedMsg = "";
+
+            if (!globalPolicy.master_switch_enabled) {
+              isAuthorized = false;
+              blockedMsg = globalPolicy.blocked_message || "Fleet-wide access has been disabled by administrator.";
+            } else if (device && device.is_blocked) {
+              isAuthorized = false;
+              blockedMsg = device.blocked_message || globalPolicy.blocked_message || "Device access has been revoked.";
+            } else if (globalPolicy.require_whitelist && (!device || !device.is_allowed)) {
+              isAuthorized = false;
+              blockedMsg = "Device not on authorized whitelist.";
+            } else if (isOutdated) {
+              isAuthorized = false;
+              blockedMsg = `Application update required. Minimum version is ${minReqVersion}.`;
+            }
+
+            const statusPayload = {
+              type: "STATUS_UPDATE",
+              device_id: id,
+              is_authorized: isAuthorized,
+              blocked_message: blockedMsg,
+              is_blocked: device ? device.is_blocked : false,
+              master_switch_enabled: globalPolicy.master_switch_enabled,
+              allow_scanning: device ? (device.allow_scanning !== false) : (globalPolicy.default_allow_scanning !== false),
+              allow_price_check: device ? (device.allow_price_check !== false) : (globalPolicy.default_allow_price_check !== false),
+              branch: device ? device.branch : (globalPolicy.default_branch || "DEFAULT"),
+              server_time: now
+            };
+
+            await writer.write(encoder.encode(`event: status\ndata: ${JSON.stringify(statusPayload)}\n\n`));
+
+            // Flush any pending commands immediately upon connection
+            if (device && device.pending_commands && device.pending_commands.length > 0) {
+              for (const cmd of device.pending_commands) {
+                await writer.write(encoder.encode(`event: command\ndata: ${JSON.stringify(cmd)}\n\n`));
+              }
+            }
+          } catch (_) {}
+        })();
+
+        // Clean up connection when closed
+        request.signal?.addEventListener("abort", () => {
+          const set = activeStreams.get(id);
+          if (set) {
+            set.delete(writer);
+            if (set.size === 0) activeStreams.delete(id);
+          }
+          try { writer.close(); } catch (_) {}
+        });
+
+        return new Response(readable, {
+          headers: {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*"
+          }
+        });
+      }
+
+      // -------------------------------------------------------------
       // 3. Lightweight Device Status Polling (GET /api/device/status)
       // Zero KV writes strictly preserved for free tier quota.
       // -------------------------------------------------------------
@@ -674,6 +795,29 @@ export default {
 
           await saveDeviceRecord(KV, id, device);
           updatedDevice = device;
+
+          // Push live event to active SSE stream listener
+          const togglePayload = {
+            type: "STATUS_UPDATE",
+            device_id: id,
+            is_authorized: !updatedDevice.is_blocked,
+            is_blocked: updatedDevice.is_blocked,
+            allow_scanning: updatedDevice.allow_scanning !== false,
+            allow_price_check: updatedDevice.allow_price_check !== false,
+            branch: updatedDevice.branch,
+            server_time: now
+          };
+          broadcastToDevice(id, "status", togglePayload);
+        }
+
+        if (body.master_switch_enabled !== undefined) {
+          const globalPayload = {
+            type: "GLOBAL_POLICY_UPDATE",
+            master_switch_enabled: Boolean(body.master_switch_enabled),
+            blocked_message: body.blocked_message || "",
+            server_time: Date.now()
+          };
+          broadcastToAll("status", globalPayload);
         }
 
         return jsonResponse({
@@ -784,6 +928,9 @@ export default {
         device.pending_commands.push(cmdObj);
         await saveDeviceRecord(KV, id, device);
 
+        // Push live command event to active SSE stream listener immediately (<300ms)
+        broadcastToDevice(id, "command", cmdObj);
+
         return jsonResponse({
           success: true,
           command_id: commandId,
@@ -891,6 +1038,16 @@ export default {
         }
 
         await saveGlobalPolicy(KV, globalPolicy);
+
+        // Push live global policy change to all connected devices immediately (<300ms)
+        broadcastToAll("status", {
+          type: "GLOBAL_POLICY_UPDATE",
+          master_switch_enabled: globalPolicy.master_switch_enabled,
+          blocked_message: globalPolicy.blocked_message,
+          min_version_android: globalPolicy.min_version_android,
+          min_version_windows: globalPolicy.min_version_windows,
+          server_time: Date.now()
+        });
 
         return jsonResponse({
           success: true,
