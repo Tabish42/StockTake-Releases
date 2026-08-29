@@ -208,12 +208,39 @@ async function kvDelete(KV, key) {
 }
 
 /**
+ * Automatically detects the KV namespace binding regardless of the variable name in Cloudflare dashboard.
+ */
+function getKVNamespace(env) {
+  if (!env) return null;
+  if (env.DEVICE_REGISTRY_KV) return env.DEVICE_REGISTRY_KV;
+  if (env.STOCKTAKE_KV) return env.STOCKTAKE_KV;
+  if (env.DEVICES_POLICY) return env.DEVICES_POLICY;
+  if (env.DEVICES_KV) return env.DEVICES_KV;
+  if (env.KV) return env.KV;
+  for (const val of Object.values(env)) {
+    if (val && typeof val.get === "function" && typeof val.put === "function") {
+      return val;
+    }
+  }
+  return null;
+}
+
+/**
  * Deletes atomic device record (`device:{id}`).
  */
 async function deleteDeviceRecord(KV, deviceId) {
   const normId = deviceId.trim().toUpperCase();
   const key = `device:${normId}`;
   await kvDelete(KV, key);
+
+  try {
+    const rawIndex = await kvGet(KV, "fleet:devices_index");
+    let indexList = rawIndex ? JSON.parse(rawIndex) : [];
+    if (Array.isArray(indexList)) {
+      indexList = indexList.filter(id => id !== normId);
+      await kvPut(KV, "fleet:devices_index", JSON.stringify(indexList));
+    }
+  } catch (_) {}
 }
 
 /**
@@ -243,7 +270,7 @@ async function kvList(KV, prefix) {
 }
 
 /**
- * Loads global fleet policy with defaults and legacy migration.
+ * Loads global fleet policy with defaults.
  */
 async function getGlobalPolicy(KV) {
   const defaultPolicy = {
@@ -297,30 +324,68 @@ async function getDeviceRecord(KV, deviceId) {
 }
 
 /**
- * Saves atomic device record (`device:{id}`).
+ * Saves atomic device record (`device:{id}`) and maintains the fleet devices index.
  */
 async function saveDeviceRecord(KV, deviceId, record) {
   const normId = deviceId.trim().toUpperCase();
   const key = `device:${normId}`;
   await kvPut(KV, key, JSON.stringify(record));
+
+  try {
+    const rawIndex = await kvGet(KV, "fleet:devices_index");
+    let indexList = rawIndex ? JSON.parse(rawIndex) : [];
+    if (!Array.isArray(indexList)) indexList = [];
+    if (!indexList.includes(normId)) {
+      indexList.push(normId);
+      await kvPut(KV, "fleet:devices_index", JSON.stringify(indexList));
+    }
+  } catch (_) {}
 }
 
 /**
- * Enumerates all devices from KV with batch parallel reading.
+ * Enumerates all devices from KV with batch parallel reading and index priority.
  */
 async function listAllDevices(KV) {
   const devices = [];
+  const foundIds = new Set();
   try {
-    const deviceKeys = await kvList(KV, "device:");
-    const batchSize = 25;
-    for (let i = 0; i < deviceKeys.length; i += batchSize) {
-      const chunk = deviceKeys.slice(i, i + batchSize);
-      const records = await Promise.all(chunk.map(k => kvGet(KV, k.name)));
+    // 1. Try explicit index first (fastest and most consistent)
+    const rawIndex = await kvGet(KV, "fleet:devices_index");
+    let indexList = rawIndex ? JSON.parse(rawIndex) : [];
+    if (Array.isArray(indexList) && indexList.length > 0) {
+      const records = await Promise.all(indexList.map(id => kvGet(KV, `device:${id}`)));
       for (const raw of records) {
         if (raw) {
           try {
-            devices.push(JSON.parse(raw));
+            const dev = JSON.parse(raw);
+            const devId = (dev.device_id || dev.id || "").trim().toUpperCase();
+            if (devId) {
+              devices.push(dev);
+              foundIds.add(devId);
+            }
           } catch (_) {}
+        }
+      }
+    }
+
+    // 2. Fallback to prefix enumeration for any device not yet indexed
+    const deviceKeys = await kvList(KV, "device:");
+    const missingKeys = deviceKeys.filter(k => {
+      const id = k.name.replace(/^device:/, "").trim().toUpperCase();
+      return !foundIds.has(id);
+    });
+
+    if (missingKeys.length > 0) {
+      const batchSize = 25;
+      for (let i = 0; i < missingKeys.length; i += batchSize) {
+        const chunk = missingKeys.slice(i, i + batchSize);
+        const records = await Promise.all(chunk.map(k => kvGet(KV, k.name)));
+        for (const raw of records) {
+          if (raw) {
+            try {
+              devices.push(JSON.parse(raw));
+            } catch (_) {}
+          }
         }
       }
     }
@@ -342,7 +407,7 @@ export default {
       });
     }
 
-    const KV = env && env.DEVICE_REGISTRY_KV;
+    const KV = getKVNamespace(env);
 
     try {
       // -------------------------------------------------------------
